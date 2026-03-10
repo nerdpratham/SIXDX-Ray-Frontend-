@@ -1,4 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAppContext } from "../context/AppContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 interface InputFieldProps {
@@ -7,12 +9,37 @@ interface InputFieldProps {
   placeholder: string;
   value: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onBlur?: () => void;
   autoComplete?: string;
+  error?: string;
+  touched?: boolean;
 }
 
 interface FormState {
   username: string;
   password: string;
+}
+
+interface FormErrors {
+  username: string;
+  password: string;
+}
+
+type FormStatus = "idle" | "validating" | "loading" | "success" | "error";
+
+// ─── Validation ───────────────────────────────────────────────────────────────
+const USERNAME_REGEX = /^[a-zA-Z][a-zA-Z0-9_]{2,20}$/;
+
+function validateUsername(value: string): string {
+  if (!value.trim()) return "This field is required";
+  if (!USERNAME_REGEX.test(value))
+    return "3–21 chars, start with a letter, letters/numbers/underscore only";
+  return "";
+}
+
+function validatePassword(value: string): string {
+  if (!value.trim()) return "This field is required";
+  return "";
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -24,9 +51,13 @@ function PillInput({
   placeholder,
   value,
   onChange,
+  onBlur,
   autoComplete,
+  error,
+  touched,
 }: InputFieldProps) {
   const [focused, setFocused] = useState(false);
+  const hasError = touched && !!error;
 
   return (
     <div className="relative w-full">
@@ -37,22 +68,62 @@ function PillInput({
         value={value}
         onChange={onChange}
         autoComplete={autoComplete}
+        aria-invalid={hasError}
+        aria-describedby={hasError ? `${id}-error` : undefined}
         onFocus={() => setFocused(true)}
-        onBlur={() => setFocused(false)}
-        className="w-full px-5 py-4 rounded-full text-white placeholder-white/55 text-sm font-light outline-none transition-all duration-300"
+        onBlur={() => { setFocused(false); onBlur?.(); }}
+        className="w-full px-5 py-4 rounded-full text-white placeholder-white/55 text-sm font-light outline-none transition-all duration-200"
         style={{
-          background: "rgba(255, 255, 255, 0.14)",
-          border: focused
-            ? "1px solid rgba(255,255,255,0.55)"
+          background: hasError
+            ? "linear-gradient(to bottom, rgba(255,80,80,0.18) 0%, rgba(200,60,60,0.12) 100%)"
+            : focused
+            ? "linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(180,210,255,0.18) 100%)"
+            : "linear-gradient(to bottom, rgba(255,255,255,0.18) 0%, rgba(140,190,255,0.10) 100%)",
+          border: hasError
+            ? "1px solid rgba(255,100,100,0.75)"
+            : focused
+            ? "1px solid rgba(255,255,255,0.6)"
             : "1px solid rgba(255,255,255,0.22)",
           backdropFilter: "blur(14px)",
           WebkitBackdropFilter: "blur(14px)",
-          boxShadow: focused
-            ? "0 0 0 3px rgba(255,255,255,0.08), inset 0 1px 0 rgba(255,255,255,0.2)"
-            : "inset 0 1px 0 rgba(255,255,255,0.12)",
+          boxShadow: hasError
+            ? `
+              0 2px 0 rgba(255,120,120,0.2) inset,
+              0 -1px 0 rgba(120,0,0,0.15) inset,
+              0 4px 0 rgba(255,80,80,0.12),
+              0 6px 20px rgba(180,0,0,0.18),
+              0 0 0 3px rgba(255,80,80,0.1)
+            `
+            : focused
+            ? `
+              0 2px 0 rgba(255,255,255,0.25) inset,
+              0 -1px 0 rgba(0,20,100,0.2) inset,
+              0 6px 0 rgba(100,150,255,0.15),
+              0 10px 24px rgba(0,30,160,0.25),
+              0 20px 40px rgba(80,140,255,0.12),
+              0 0 0 3px rgba(255,255,255,0.1)
+            `
+            : `
+              0 2px 0 rgba(255,255,255,0.15) inset,
+              0 -1px 0 rgba(0,20,100,0.15) inset,
+              0 4px 0 rgba(100,150,255,0.1),
+              0 6px 16px rgba(0,30,160,0.18),
+              0 14px 28px rgba(80,140,255,0.08)
+            `,
           letterSpacing: "0.01em",
         }}
       />
+      {/* Error message */}
+      {hasError && (
+        <p
+          id={`${id}-error`}
+          role="alert"
+          className="mt-1.5 px-4 text-xs"
+          style={{ color: "rgba(255,160,160,0.95)", letterSpacing: "0.01em" }}
+        >
+          {error}
+        </p>
+      )}
     </div>
   );
 }
@@ -122,34 +193,95 @@ function MeshGradient() {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-interface LandingPageProps {
-  onLoginSuccess?: () => void;
-}
+export default function LandingPage() {
+  const navigate = useNavigate();
+  const { setUsername, setCurrentPage } = useAppContext();
 
-export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
-  const [form, setForm] = useState<FormState>({ username: "", password: "" });
+  const [form, setForm]       = useState<FormState>({ username: "", password: "" });
+  const [errors, setErrors]   = useState<FormErrors>({ username: "", password: "" });
+  const [touched, setTouched] = useState<Record<keyof FormState, boolean>>({ username: false, password: false });
+  const [status, setStatus]   = useState<FormStatus>("idle");
+  const [toast, setToast]     = useState<string>("");
   const [mounted, setMounted] = useState(false);
-  const [loading, setLoading] = useState(false);
 
-  // Trigger entrance animation
+  // Entrance animation
   useEffect(() => {
+    setCurrentPage("landing");
     const t = setTimeout(() => setMounted(true), 60);
     return () => clearTimeout(t);
+  }, [setCurrentPage]);
+
+  // Auto-dismiss toast
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  // ── Real-time validation ──
+  const validate = useCallback((field: keyof FormState, value: string): string => {
+    if (field === "username") return validateUsername(value);
+    if (field === "password") return validatePassword(value);
+    return "";
   }, []);
 
   function handleChange(field: keyof FormState) {
-    return (e: React.ChangeEvent<HTMLInputElement>) =>
-      setForm((prev) => ({ ...prev, [field]: e.target.value }));
+    return (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setForm((prev) => ({ ...prev, [field]: value }));
+      if (touched[field]) {
+        setErrors((prev) => ({ ...prev, [field]: validate(field, value) }));
+      }
+    };
   }
 
-  function handleSubmit(e: React.FormEvent) {
+  function handleBlur(field: keyof FormState) {
+    setTouched((prev) => ({ ...prev, [field]: true }));
+    setErrors((prev) => ({ ...prev, [field]: validate(field, form[field]) }));
+  }
+
+  // Derive form validity
+  const usernameError = validate("username", form.username);
+  const passwordError = validate("password", form.password);
+  const isFormValid   = !usernameError && !passwordError;
+  const isLoading     = status === "loading";
+
+  // ── Submission ──
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
-    // Simulate async — replace with your auth logic
-    setTimeout(() => {
-      setLoading(false);
-      onLoginSuccess?.();
-    }, 800);
+
+    // Mark all fields touched & run full validation
+    setStatus("validating");
+    const newErrors: FormErrors = {
+      username: validate("username", form.username),
+      password: validate("password", form.password),
+    };
+    setErrors(newErrors);
+    setTouched({ username: true, password: true });
+
+    if (newErrors.username || newErrors.password) {
+      setStatus("idle");
+      return;
+    }
+
+    // Submit
+    setStatus("loading");
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: form.username, password: form.password }),
+      });
+
+      if (!res.ok) throw new Error("Login failed");
+
+      setUsername(form.username);
+      setStatus("success");
+      navigate("/organizations");
+    } catch {
+      setStatus("error");
+      setToast("Login failed, please try again");
+    }
   }
 
   return (
@@ -191,6 +323,15 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
           to { transform: rotate(360deg); }
         }
 
+        @keyframes toastIn {
+          from { opacity: 0; transform: translateY(12px) scale(0.97); }
+          to   { opacity: 1; transform: translateY(0)    scale(1);    }
+        }
+        @keyframes toastOut {
+          from { opacity: 1; }
+          to   { opacity: 0; transform: translateY(8px); }
+        }
+
         .anim-logo {
           animation: fadeSlideUp 0.5s cubic-bezier(0.22,1,0.36,1) both;
           animation-delay: 0.05s;
@@ -209,14 +350,29 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
         }
 
         .login-btn {
-          transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+          transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.2s ease;
+          transform: translateY(0px);
         }
         .login-btn:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow: 0 12px 36px rgba(255,255,255,0.28);
+          transform: translateY(-3px);
+          box-shadow:
+            0 2px 0 rgba(255,255,255,0.9) inset,
+            0 -1px 0 rgba(0,10,80,0.25) inset,
+            0 8px 0 rgba(180,200,255,0.25),
+            0 12px 24px rgba(0,30,160,0.35),
+            0 24px 48px rgba(100,160,255,0.2) !important;
         }
         .login-btn:active:not(:disabled) {
-          transform: translateY(0px);
+          transform: translateY(2px);
+          box-shadow:
+            0 1px 0 rgba(255,255,255,0.7) inset,
+            0 -1px 0 rgba(0,10,80,0.2) inset,
+            0 2px 0 rgba(180,200,255,0.2),
+            0 4px 12px rgba(0,30,160,0.3) !important;
+        }
+        .login-btn:disabled {
+          opacity: 0.45;
+          cursor: not-allowed;
         }
 
         .forgot-link {
@@ -235,23 +391,52 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
           animation: spinRing 0.75s linear infinite;
           display: inline-block;
         }
+
+        .toast {
+          animation: toastIn 0.3s cubic-bezier(0.22,1,0.36,1) both;
+        }
       `}</style>
 
-      {/*
-       * Full-screen wrapper — fills entire viewport.
-       * MeshGradient covers the background; form is centred on the lower half.
-       */}
+      {/* ── Full-screen wrapper ── */}
       <div
         className="relative min-h-screen w-full overflow-hidden flex flex-col"
         style={{ fontFamily: "'DM Sans', sans-serif" }}
       >
-        {/* ── Full-screen mesh background ── */}
         <MeshGradient />
+
+        {/* ── Toast ── */}
+        {toast && (
+          <div
+            role="alert"
+            aria-live="assertive"
+            className="toast fixed top-6 left-1/2 z-50 px-5 py-3 rounded-2xl text-sm flex items-center gap-2.5"
+            style={{
+              transform: "translateX(-50%)",
+              background: "rgba(30,10,10,0.75)",
+              backdropFilter: "blur(16px)",
+              WebkitBackdropFilter: "blur(16px)",
+              border: "1px solid rgba(255,80,80,0.35)",
+              color: "rgba(255,180,180,0.95)",
+              boxShadow: "0 8px 32px rgba(180,0,0,0.25)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {/* Error icon */}
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+              stroke="rgba(255,120,120,0.9)" strokeWidth="2.2"
+              strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            {toast}
+          </div>
+        )}
 
         {/* ── Content layer ── */}
         <div className="relative z-10 flex flex-col flex-1 w-full">
 
-          {/* LOGO — top centre, matching screenshot */}
+          {/* LOGO */}
           <div
             className={`text-center pt-12 sm:pt-16 ${mounted ? "anim-logo" : "opacity-0"}`}
           >
@@ -269,10 +454,10 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
             </span>
           </div>
 
-          {/* Spacer — pushes form to lower portion of screen */}
+          {/* Spacer */}
           <div className="flex-1" />
 
-          {/* ── FORM — centred, width-capped for readability ── */}
+          {/* ── FORM ── */}
           <div className="w-full px-6 pb-10 sm:pb-16 flex flex-col items-center">
             <form
               onSubmit={handleSubmit}
@@ -282,7 +467,7 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
             >
               {/* Inputs */}
               <div
-                className={`space-y-3 mb-4 ${mounted ? "anim-inputs" : "opacity-0"}`}
+                className={`space-y-2 mb-4 ${mounted ? "anim-inputs" : "opacity-0"}`}
               >
                 <PillInput
                   id="username"
@@ -291,6 +476,9 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
                   value={form.username}
                   onChange={handleChange("username")}
                   autoComplete="username"
+                  error={errors.username}
+                  touched={touched.username}
+                  onBlur={() => handleBlur("username")}
                 />
                 <PillInput
                   id="password"
@@ -299,6 +487,9 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
                   value={form.password}
                   onChange={handleChange("password")}
                   autoComplete="current-password"
+                  error={errors.password}
+                  touched={touched.password}
+                  onBlur={() => handleBlur("password")}
                 />
               </div>
 
@@ -306,20 +497,27 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
               <div className={`mb-1 ${mounted ? "anim-btn" : "opacity-0"}`}>
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="login-btn w-full py-4 rounded-full text-sm font-semibold disabled:opacity-80 flex items-center justify-center gap-2"
+                  disabled={isLoading || (touched.username && touched.password && !isFormValid)}
+                  className="login-btn w-full py-4 rounded-full text-sm font-semibold flex items-center justify-center gap-2"
                   style={{
                     fontFamily: "'Ethnocentric', sans-serif",
-                    background: "#ffffff",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #dce8ff 100%)",
                     color: "#0a20bb",
                     letterSpacing: "0.01em",
-                    boxShadow: "0 6px 28px rgba(255,255,255,0.25)",
+                    boxShadow: `
+                      0 2px 0 rgba(255,255,255,0.85) inset,
+                      0 -2px 0 rgba(160,185,255,0.4) inset,
+                      0 6px 0 rgba(160,185,255,0.3),
+                      0 10px 20px rgba(0,30,160,0.3),
+                      0 20px 40px rgba(100,160,255,0.15)
+                    `,
+                    textShadow: "0 1px 0 rgba(255,255,255,0.6)",
                   }}
                 >
-                  {loading ? (
+                  {isLoading ? (
                     <>
                       <span className="spin-ring" />
-                      <span>Signing in…</span>
+                      <span style={{ fontFamily: "'DM Sans', sans-serif" }}>Signing in…</span>
                     </>
                   ) : (
                     "Log in"
@@ -344,4 +542,4 @@ export default function LandingPage({ onLoginSuccess }: LandingPageProps) {
       </div>
     </>
   );
-} 
+}

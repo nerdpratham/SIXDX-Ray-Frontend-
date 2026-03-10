@@ -1,9 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-interface OrganisationProps {
-  onNext?: (organisation: string) => void;
-}
+import { useNavigate } from "react-router-dom";
+import { useAppContext } from "../context/AppContext";
 
 interface Organisation {
   id: string;
@@ -71,7 +68,9 @@ function MeshGradient() {
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
-export default function Organisation({ onNext }: OrganisationProps) {
+export default function Organisation() {
+  const navigate = useNavigate();
+  const { setSelectedOrg, setCurrentPage } = useAppContext();
   const [mounted, setMounted]       = useState(false);
   const [selected, setSelected]     = useState<Organisation | null>(null);
   const [open, setOpen]             = useState(false);
@@ -79,9 +78,10 @@ export default function Organisation({ onNext }: OrganisationProps) {
   const dropdownRef                 = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    setCurrentPage("organisation");
     const t = setTimeout(() => setMounted(true), 60);
     return () => clearTimeout(t);
-  }, []);
+  }, [setCurrentPage]);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -99,7 +99,8 @@ export default function Organisation({ onNext }: OrganisationProps) {
     setLoading(true);
     setTimeout(() => {
       setLoading(false);
-      onNext?.(selected.id);
+      setSelectedOrg(selected.id);
+      navigate("/meetings");
     }, 1200);
   }
 
@@ -152,14 +153,25 @@ export default function Organisation({ onNext }: OrganisationProps) {
         .anim-btn    { animation: fadeSlideUp 0.55s cubic-bezier(0.22,1,0.36,1) both; animation-delay: 0.35s; }
 
         .next-btn {
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
+          transition: transform 0.15s ease, box-shadow 0.15s ease;
+          transform: translateY(0px);
         }
         .next-btn:hover:not(:disabled) {
-          transform: translateY(-2px);
-          box-shadow: 0 14px 40px rgba(255,255,255,0.3);
+          transform: translateY(-3px);
+          box-shadow:
+            0 2px 0 rgba(255,255,255,0.9) inset,
+            0 -1px 0 rgba(0,10,80,0.25) inset,
+            0 8px 0 rgba(180,200,255,0.25),
+            0 12px 24px rgba(0,30,160,0.35),
+            0 24px 48px rgba(100,160,255,0.2) !important;
         }
         .next-btn:active:not(:disabled) {
-          transform: translateY(0);
+          transform: translateY(2px);
+          box-shadow:
+            0 1px 0 rgba(255,255,255,0.7) inset,
+            0 -1px 0 rgba(0,10,80,0.2) inset,
+            0 2px 0 rgba(180,200,255,0.2),
+            0 4px 12px rgba(0,30,160,0.3) !important;
         }
         .next-btn:disabled {
           opacity: 0.45;
@@ -196,12 +208,10 @@ export default function Organisation({ onNext }: OrganisationProps) {
         }
 
         .select-trigger {
-          transition: border-color 0.2s ease, box-shadow 0.2s ease;
+          transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
         }
         .select-trigger:focus-visible {
           outline: none;
-          border-color: rgba(255,255,255,0.6) !important;
-          box-shadow: 0 0 0 3px rgba(255,255,255,0.1);
         }
       `}</style>
 
@@ -261,15 +271,30 @@ export default function Organisation({ onNext }: OrganisationProps) {
                   onClick={() => setOpen((o) => !o)}
                   className="select-trigger w-full px-5 py-4 rounded-full flex items-center justify-between text-sm outline-none"
                   style={{
-                    background: "rgba(255,255,255,0.14)",
+                    background: open
+                      ? "linear-gradient(to bottom, rgba(255,255,255,0.22) 0%, rgba(180,210,255,0.18) 100%)"
+                      : "linear-gradient(to bottom, rgba(255,255,255,0.18) 0%, rgba(140,190,255,0.10) 100%)",
                     border: open
-                      ? "1px solid rgba(255,255,255,0.55)"
+                      ? "1px solid rgba(255,255,255,0.6)"
                       : "1px solid rgba(255,255,255,0.22)",
                     backdropFilter: "blur(14px)",
                     WebkitBackdropFilter: "blur(14px)",
                     boxShadow: open
-                      ? "0 0 0 3px rgba(255,255,255,0.08), inset 0 1px 0 rgba(255,255,255,0.2)"
-                      : "inset 0 1px 0 rgba(255,255,255,0.12)",
+                      ? `
+                        0 2px 0 rgba(255,255,255,0.25) inset,
+                        0 -1px 0 rgba(0,20,100,0.2) inset,
+                        0 6px 0 rgba(100,150,255,0.15),
+                        0 10px 24px rgba(0,30,160,0.25),
+                        0 20px 40px rgba(80,140,255,0.12),
+                        0 0 0 3px rgba(255,255,255,0.1)
+                      `
+                      : `
+                        0 2px 0 rgba(255,255,255,0.15) inset,
+                        0 -1px 0 rgba(0,20,100,0.15) inset,
+                        0 4px 0 rgba(100,150,255,0.1),
+                        0 6px 16px rgba(0,30,160,0.18),
+                        0 14px 28px rgba(80,140,255,0.08)
+                      `,
                     color: selected ? "rgba(255,255,255,0.9)" : "rgba(255,255,255,0.45)",
                     letterSpacing: "0.01em",
                   }}
@@ -357,10 +382,17 @@ export default function Organisation({ onNext }: OrganisationProps) {
                   className="next-btn w-full py-4 rounded-full text-sm font-semibold flex items-center justify-center gap-2"
                   style={{
                     fontFamily: "'Ethnocentric', sans-serif",
-                    background: "#ffffff",
+                    background: "linear-gradient(to bottom, #ffffff 0%, #dce8ff 100%)",
                     color: "#0a20bb",
                     letterSpacing: "0.04em",
-                    boxShadow: "0 6px 28px rgba(255,255,255,0.2)",
+                    boxShadow: `
+                      0 2px 0 rgba(255,255,255,0.85) inset,
+                      0 -2px 0 rgba(160,185,255,0.4) inset,
+                      0 6px 0 rgba(160,185,255,0.3),
+                      0 10px 20px rgba(0,30,160,0.3),
+                      0 20px 40px rgba(100,160,255,0.15)
+                    `,
+                    textShadow: "0 1px 0 rgba(255,255,255,0.6)",
                   }}
                 >
                   {loading ? (
