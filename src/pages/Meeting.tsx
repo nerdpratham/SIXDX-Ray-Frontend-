@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { ConnectionState } from "livekit-client";
 import { useAppContext } from "../context/AppContext";
+import { useMeetingRoom } from "../lib/meeting/useMeetingRoom";
 
 import ControlBar from "../components/meeting/ControlBar";
 import VideoGrid from "../components/video/VideoGrid";
@@ -8,14 +10,14 @@ import ScreenShare from "../components/video/ScreenShare";
 import type { Participant } from "../components/video/VideoTile";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
 interface MeetingProps {
-  /** Meeting room ID — passed from router params or parent */
   roomId: string;
-  /** Display name of the local user */
   localName?: string;
 }
 
-// ─── Audio level analyser hook ────────────────────────────────────────────────
+// ─── Audio level analyser ─────────────────────────────────────────────────────
+
 function useAudioLevel(stream: MediaStream | null): number {
   const [level, setLevel] = useState(0);
   const rafRef = useRef<number>(0);
@@ -52,30 +54,50 @@ function useAudioLevel(stream: MediaStream | null): number {
   return level;
 }
 
+// ─── Error message map ────────────────────────────────────────────────────────
+
+const ERROR_MESSAGES: Record<string, string> = {
+  token: "Could not get meeting credentials. Please try again.",
+  connection: "Could not connect to the meeting server.",
+  media: "Could not access camera or microphone. Check your permissions.",
+  disconnected: "You were disconnected from the meeting.",
+};
+
 // ─── Main Component ───────────────────────────────────────────────────────────
+
 export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
   const navigate = useNavigate();
   const { setCurrentPage } = useAppContext();
 
-  // ── Local media state ──
-  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
-  const [screenStream, setScreenStream] = useState<MediaStream | null>(null);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isCameraOff, setIsCameraOff] = useState(false);
-  const [isScreenSharing, setIsScreenSharing] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-  const [recordingElapsed, setRecordingElapsed] = useState(0);
+  const {
+    participants,
+    connectionState,
+    isMuted,
+    isCameraOff,
+    isScreenSharing,
+    error,
+    localVideoStream,
+    localAudioStream,
+    screenShareStream,
+    toggleMic,
+    toggleCamera,
+    toggleScreenShare,
+    disconnect,
+  } = useMeetingRoom(roomId, localName);
 
   // ── UI state ──
   const [showParticipants, setShowParticipants] = useState(false);
   const [showChat, setShowChat] = useState(false);
   const [chatUnread, setChatUnread] = useState(0);
-  const [mediaError, setMediaError] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingElapsed, setRecordingElapsed] = useState(0);
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
 
-  // ── Remote participants (populated by your WebRTC/signalling layer) ──
-  const [remoteParticipants, setRemoteParticipants] = useState<Participant[]>([]);
+  const audioLevel = useAudioLevel(isMuted ? null : localAudioStream);
 
-  const audioLevel = useAudioLevel(isMuted ? null : localStream);
+  useEffect(() => {
+    setCurrentPage("meetings");
+  }, [setCurrentPage]);
 
   // ── Recording timer ──
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -84,7 +106,7 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
       setRecordingElapsed(0);
       recordingTimerRef.current = setInterval(
         () => setRecordingElapsed((s) => s + 1),
-        1000
+        1000,
       );
     } else {
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
@@ -92,92 +114,35 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
     return () => { if (recordingTimerRef.current) clearInterval(recordingTimerRef.current); };
   }, [isRecording]);
 
-  // ── Acquire local camera + mic on mount ──
-  useEffect(() => {
-    setCurrentPage("meetings");
-    let stream: MediaStream;
-    (async () => {
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        setLocalStream(stream);
-      } catch {
-        setMediaError("Could not access camera or microphone. Check your permissions.");
-      }
-    })();
-
-    return () => {
-      stream?.getTracks().forEach((t) => t.stop());
-      screenStream?.getTracks().forEach((t) => t.stop());
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setCurrentPage]);
-
-  // ── Derived participant list (local + remote) ──
+  // ── Participant list: local tile prepended to remote participants ──
   const allParticipants: Participant[] = [
     {
       id: "local",
       name: localName,
-      stream: localStream,
+      stream: localVideoStream,
       isMuted,
       isCameraOff,
       isScreenSharing,
       isLocal: true,
       connectionQuality: 3,
     },
-    ...remoteParticipants,
+    ...participants,
   ];
 
   // ── Handlers ──
-  const handleToggleMic = useCallback(() => {
-    if (!localStream) return;
-    localStream.getAudioTracks().forEach((t) => { t.enabled = isMuted; });
-    setIsMuted((m) => !m);
-  }, [localStream, isMuted]);
-
-  const handleToggleCamera = useCallback(() => {
-    if (!localStream) return;
-    localStream.getVideoTracks().forEach((t) => { t.enabled = isCameraOff; });
-    setIsCameraOff((c) => !c);
-  }, [localStream, isCameraOff]);
-
-  const handleToggleScreenShare = useCallback(async () => {
-    if (isScreenSharing) {
-      screenStream?.getTracks().forEach((t) => t.stop());
-      setScreenStream(null);
-      setIsScreenSharing(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-        stream.getVideoTracks()[0].onended = () => {
-          setScreenStream(null);
-          setIsScreenSharing(false);
-        };
-        setScreenStream(stream);
-        setIsScreenSharing(true);
-      } catch {
-        // User cancelled or denied
-      }
-    }
-  }, [isScreenSharing, screenStream]);
-
-  const handleToggleRecord = useCallback(() => {
-    setIsRecording((r) => !r);
-    // TODO: wire to your backend recording API
-  }, []);
+  const handleToggleMic = useCallback(() => { toggleMic(); }, [toggleMic]);
+  const handleToggleCamera = useCallback(() => { toggleCamera(); }, [toggleCamera]);
+  const handleToggleScreenShare = useCallback(() => { toggleScreenShare(); }, [toggleScreenShare]);
+  const handleToggleRecord = useCallback(() => { setIsRecording((r) => !r); }, []);
 
   const handleEndCall = useCallback(() => {
-    localStream?.getTracks().forEach((t) => t.stop());
-    screenStream?.getTracks().forEach((t) => t.stop());
+    disconnect();
     navigate("/");
-  }, [localStream, screenStream, navigate]);
+  }, [disconnect, navigate]);
 
-  // ── Expose setRemoteParticipants for your WebRTC layer ──
-  // Call window.__setRemoteParticipants(participants) from your signalling code,
-  // or better: replace this with a useWebRTC() hook that returns remoteParticipants.
-  useEffect(() => {
-    (window as unknown as Record<string, unknown>).__setRemoteParticipants = setRemoteParticipants;
-    return () => { delete (window as unknown as Record<string, unknown>).__setRemoteParticipants; };
-  }, []);
+  const displayedError = error && error !== dismissedError ? ERROR_MESSAGES[error] ?? null : null;
+  const isConnecting = connectionState === ConnectionState.Connecting
+    || connectionState === ConnectionState.Reconnecting;
 
   return (
     <>
@@ -193,6 +158,10 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
         }
 
         .meeting-root * { box-sizing: border-box; }
+
+        @keyframes connSpin {
+          to { transform: rotate(360deg); }
+        }
       `}</style>
 
       <div
@@ -202,7 +171,7 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
-        {/* ── Header bar ─────────────────────────────────────────────────── */}
+        {/* ── Header ─────────────────────────────────────────────────────── */}
         <header
           className="flex items-center justify-between px-5 py-3 flex-shrink-0"
           style={{
@@ -211,7 +180,6 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
             backdropFilter: "blur(16px)",
           }}
         >
-          {/* Logo */}
           <span
             style={{
               fontFamily: "'Ethnocentric', sans-serif",
@@ -223,7 +191,6 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
             SIXDX
           </span>
 
-          {/* Room ID */}
           <div
             className="flex items-center gap-2 px-3 py-1.5 rounded-full text-xs"
             style={{
@@ -237,14 +204,15 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
               className="inline-block rounded-full"
               style={{
                 width: 6, height: 6,
-                background: "#22c55e",
-                boxShadow: "0 0 6px rgba(34,197,94,0.6)",
+                background: isConnecting ? "#f59e0b" : "#22c55e",
+                boxShadow: isConnecting
+                  ? "0 0 6px rgba(245,158,11,0.6)"
+                  : "0 0 6px rgba(34,197,94,0.6)",
               }}
             />
             {roomId}
           </div>
 
-          {/* Right side: participants count + recordings icon */}
           <div className="flex items-center gap-3">
             <div
               className="flex items-center gap-1.5 text-xs"
@@ -258,14 +226,12 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
               </svg>
               {allParticipants.length}
             </div>
-            {/* Recordings shortcut */}
             <button
               type="button"
               onClick={() => navigate("/recordings")}
               className="flex items-center justify-center rounded-full transition-opacity hover:opacity-80"
               style={{
-                width: 32,
-                height: 32,
+                width: 32, height: 32,
                 background: "rgba(255,255,255,0.06)",
                 border: "1px solid rgba(255,255,255,0.15)",
                 cursor: "pointer",
@@ -282,30 +248,24 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
           </div>
         </header>
 
-        {/* ── Main content area ───────────────────────────────────────────── */}
+        {/* ── Main content ────────────────────────────────────────────────── */}
         <div className="flex flex-1 overflow-hidden">
 
           {/* Video area */}
           <div className="flex flex-col flex-1 overflow-hidden p-3 gap-3 min-w-0">
 
-            {/* Screen share — shown above grid when active */}
-            {isScreenSharing && screenStream && (
+            {isScreenSharing && screenShareStream && (
               <div className="flex-shrink-0" style={{ maxHeight: "45%" }}>
                 <ScreenShare
-                  stream={screenStream}
+                  stream={screenShareStream}
                   sharerName={localName}
                   isLocalSharer
-                  onStopShare={() => {
-                    screenStream.getTracks().forEach((t) => t.stop());
-                    setScreenStream(null);
-                    setIsScreenSharing(false);
-                  }}
+                  onStopShare={() => { toggleScreenShare(); }}
                   className="w-full h-full"
                 />
               </div>
             )}
 
-            {/* Participant grid */}
             <div className="flex-1 min-h-0 overflow-hidden">
               <VideoGrid
                 participants={allParticipants}
@@ -315,7 +275,7 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
             </div>
           </div>
 
-          {/* ── Side panel: Participants or Chat ─────────────────────────── */}
+          {/* ── Side panel ──────────────────────────────────────────────── */}
           {(showParticipants || showChat) && (
             <aside
               className="flex-shrink-0 flex flex-col"
@@ -326,15 +286,11 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
                 borderLeft: "1px solid rgba(255,255,255,0.07)",
               }}
             >
-              {/* Panel header */}
               <div
                 className="flex items-center justify-between px-4 py-3"
                 style={{ borderBottom: "1px solid rgba(255,255,255,0.07)" }}
               >
-                <span
-                  className="text-sm font-medium"
-                  style={{ color: "rgba(255,255,255,0.75)" }}
-                >
+                <span className="text-sm font-medium" style={{ color: "rgba(255,255,255,0.75)" }}>
                   {showParticipants ? "Participants" : "Chat"}
                 </span>
                 <button
@@ -343,8 +299,7 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
                   style={{
                     width: 24, height: 24,
                     background: "rgba(255,255,255,0.07)",
-                    border: "none",
-                    cursor: "pointer",
+                    border: "none", cursor: "pointer",
                   }}
                   aria-label="Close panel"
                 >
@@ -357,7 +312,6 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
                 </button>
               </div>
 
-              {/* Participants list */}
               {showParticipants && (
                 <ul className="flex-1 overflow-y-auto px-3 py-2 space-y-1">
                   {allParticipants.map((p) => (
@@ -366,29 +320,20 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
                       className="flex items-center gap-2.5 px-3 py-2 rounded-xl"
                       style={{ background: "rgba(255,255,255,0.04)" }}
                     >
-                      {/* Avatar */}
                       <div
                         className="flex items-center justify-center rounded-full text-xs font-semibold text-white flex-shrink-0"
                         style={{
                           width: 30, height: 30,
                           background: "linear-gradient(135deg, #1e6bff, #0099ff)",
-                          fontSize: "0.65rem",
-                          letterSpacing: "0.04em",
+                          fontSize: "0.65rem", letterSpacing: "0.04em",
                         }}
                       >
                         {p.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)}
                       </div>
-
-                      {/* Name */}
-                      <span
-                        className="flex-1 text-xs truncate"
-                        style={{ color: "rgba(255,255,255,0.75)" }}
-                      >
+                      <span className="flex-1 text-xs truncate" style={{ color: "rgba(255,255,255,0.75)" }}>
                         {p.name}
                         {p.isLocal && <span style={{ color: "rgba(255,255,255,0.3)" }}> (You)</span>}
                       </span>
-
-                      {/* Mute badge */}
                       {p.isMuted && (
                         <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
                           stroke="rgba(239,68,68,0.7)" strokeWidth="2.5"
@@ -403,13 +348,10 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
                 </ul>
               )}
 
-              {/* Chat placeholder */}
               {showChat && (
                 <div className="flex-1 flex items-center justify-center">
                   <p className="text-xs text-center px-4" style={{ color: "rgba(255,255,255,0.25)" }}>
                     Chat messages will appear here.
-                    <br />
-                    Connect your signalling layer to populate.
                   </p>
                 </div>
               )}
@@ -417,8 +359,29 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
           )}
         </div>
 
-        {/* ── Media permission error ──────────────────────────────────────── */}
-        {mediaError && (
+        {/* ── Connecting overlay ───────────────────────────────────────────── */}
+        {isConnecting && (
+          <div
+            className="absolute inset-0 z-40 flex items-center justify-center"
+            style={{ background: "rgba(4,10,24,0.75)", backdropFilter: "blur(8px)" }}
+          >
+            <div className="flex flex-col items-center gap-3">
+              <div style={{
+                width: 36, height: 36,
+                border: "2px solid rgba(79,179,255,0.2)",
+                borderTopColor: "#4fb3ff",
+                borderRadius: "50%",
+                animation: "connSpin 0.85s linear infinite",
+              }} />
+              <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>
+                {connectionState === ConnectionState.Reconnecting ? "Reconnecting…" : "Connecting…"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Error banner ─────────────────────────────────────────────────── */}
+        {displayedError && (
           <div
             className="absolute top-16 left-1/2 -translate-x-1/2 px-4 py-3 rounded-2xl text-sm flex items-center gap-2.5 z-50"
             style={{
@@ -436,17 +399,20 @@ export default function Meeting({ roomId, localName = "You" }: MeetingProps) {
               <line x1="12" y1="8" x2="12" y2="12"/>
               <line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
-            {mediaError}
+            {displayedError}
             <button
-              onClick={() => setMediaError(null)}
-              style={{ marginLeft: "auto", background: "none", border: "none",
-                color: "rgba(255,255,255,0.4)", cursor: "pointer", fontSize: "1rem", lineHeight: 1 }}
+              onClick={() => setDismissedError(error)}
+              style={{
+                marginLeft: "auto", background: "none", border: "none",
+                color: "rgba(255,255,255,0.4)", cursor: "pointer",
+                fontSize: "1rem", lineHeight: 1,
+              }}
               aria-label="Dismiss"
             >×</button>
           </div>
         )}
 
-        {/* ── Control bar ────────────────────────────────────────────────── */}
+        {/* ── Control bar ──────────────────────────────────────────────────── */}
         <footer
           className="flex items-center justify-center py-4 flex-shrink-0"
           style={{ background: "transparent" }}

@@ -1,8 +1,9 @@
 import { type ReactElement } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import LandingPage from './pages/LandingPage'
 import Organisation from './pages/Organisation'
 import Meeting from './pages/Meeting'
+import Room from './pages/Room'
 import RecordingPage from './pages/Recording'
 import { AppProvider, useAppContext } from './context/AppContext'
 
@@ -21,7 +22,11 @@ function RequireOrganisation({ children }: { children: ReactElement }) {
 
 function MeetingRoute() {
   const { username, selectedOrg } = useAppContext()
-  return <Meeting roomId={selectedOrg ?? 'default-room'} localName={username ?? 'You'} />
+  const location = useLocation()
+  const roomCode = (location.state as { roomCode?: string } | null)?.roomCode
+    ?? selectedOrg
+    ?? 'default-room'
+  return <Meeting roomId={roomCode} localName={username ?? 'You'} />
 }
 
 function AppRoutes() {
@@ -34,6 +39,14 @@ function AppRoutes() {
           <RequireUsername>
             <Organisation />
           </RequireUsername>
+        }
+      />
+      <Route
+        path="/room"
+        element={
+          <RequireOrganisation>
+            <Room />
+          </RequireOrganisation>
         }
       />
       <Route

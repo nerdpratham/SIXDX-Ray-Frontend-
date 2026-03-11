@@ -195,7 +195,7 @@ function MeshGradient() {
 
 export default function LandingPage() {
   const navigate = useNavigate();
-  const { setUsername, setCurrentPage } = useAppContext();
+  const { setUsername, setCurrentPage, setIsTestLogin } = useAppContext();
 
   const [form, setForm]       = useState<FormState>({ username: "", password: "" });
   const [errors, setErrors]   = useState<FormErrors>({ username: "", password: "" });
@@ -266,6 +266,20 @@ export default function LandingPage() {
 
     // Submit
     setStatus("loading");
+
+    // Test login bypass: pratham / 11111 (for reaching meeting/recordings without API)
+    const isTestLogin = form.username === "pratham" && form.password === "11111";
+    if (isTestLogin) {
+      setUsername(form.username);
+      setIsTestLogin(true);
+      setStatus("success");
+      navigate("/organizations");
+      return;
+    }
+
+    // normal login path should clear any previous test flag
+    setIsTestLogin(false);
+
     try {
       const res = await fetch("/api/login", {
         method: "POST",

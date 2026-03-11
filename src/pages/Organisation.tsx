@@ -70,7 +70,7 @@ function MeshGradient() {
 // ─── Main Component ───────────────────────────────────────────────────────────
 export default function Organisation() {
   const navigate = useNavigate();
-  const { setSelectedOrg, setCurrentPage } = useAppContext();
+  const { setSelectedOrg, setCurrentPage, isTestLogin, setIsTestLogin } = useAppContext();
   const [mounted, setMounted]       = useState(false);
   const [selected, setSelected]     = useState<Organisation | null>(null);
   const [open, setOpen]             = useState(false);
@@ -100,7 +100,13 @@ export default function Organisation() {
     setTimeout(() => {
       setLoading(false);
       setSelectedOrg(selected.id);
-      navigate("/meetings");
+      // if the login was via the test bypass, jump straight to room creator
+      if (isTestLogin) {
+        setIsTestLogin(false); // clear the flag now that we've acted on it
+        navigate("/room");
+      } else {
+        navigate("/meetings");
+      }
     }, 1200);
   }
 
@@ -336,7 +342,9 @@ export default function Organisation() {
                         key={org.id}
                         role="option"
                         aria-selected={selected?.id === org.id}
-                        onClick={() => {
+                        onMouseDown={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
                           setSelected(org);
                           setOpen(false);
                         }}
