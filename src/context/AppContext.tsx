@@ -16,11 +16,18 @@ interface AppContextValue {
 
 const AppContext = createContext<AppContextValue | undefined>(undefined)
 
+function usePersistedState<T>(key: string, initial: T) {
+  const stored = sessionStorage.getItem(key)
+  const [value, setValue] = useState<T>(stored !== null ? (JSON.parse(stored) as T) : initial)
+  const set = (next: T) => { sessionStorage.setItem(key, JSON.stringify(next)); setValue(next) }
+  return [value, set] as const
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [username, setUsername] = useState<string | null>(null)
-  const [selectedOrg, setSelectedOrg] = useState<string | null>(null)
+  const [username, setUsername] = usePersistedState<string | null>('username', null)
+  const [selectedOrg, setSelectedOrg] = usePersistedState<string | null>('selectedOrg', null)
   const [currentPage, setCurrentPage] = useState<PageName>('landing')
-  const [isTestLogin, setIsTestLogin] = useState<boolean>(false)
+  const [isTestLogin, setIsTestLogin] = usePersistedState<boolean>('isTestLogin', false)
 
   return (
     <AppContext.Provider

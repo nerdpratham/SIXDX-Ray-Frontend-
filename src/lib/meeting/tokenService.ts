@@ -1,14 +1,16 @@
-const TOKEN_ENDPOINT = import.meta.env.VITE_TOKEN_ENDPOINT as string
+import { TokenSource } from 'livekit-client'
 
-export async function fetchToken(roomId: string, identity: string): Promise<string> {
-  const res = await fetch(
-    `${TOKEN_ENDPOINT}?room=${encodeURIComponent(roomId)}&identity=${encodeURIComponent(identity)}`,
-  )
-  if (!res.ok) throw new Error(`Token request failed: ${res.status}`)
+const SANDBOX_ID = import.meta.env.VITE_LIVEKIT_SANDBOX_ID as string
 
-  const data = (await res.json()) as Record<string, unknown>
-  const token = (data.accessToken ?? data.token) as string | undefined
-  if (!token) throw new Error('No token in server response')
+export interface TokenResult {
+  token: string
+  serverUrl: string
+}
 
-  return token
+export async function fetchToken(roomId: string, identity: string): Promise<TokenResult> {
+  const { serverUrl, participantToken } = await TokenSource
+    .sandboxTokenServer(SANDBOX_ID)
+    .fetch({ roomName: roomId, participantName: identity })
+
+  return { token: participantToken, serverUrl }
 }

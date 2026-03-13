@@ -1,7 +1,5 @@
 import { Room, VideoPresets } from 'livekit-client'
 
-const LIVEKIT_URL = import.meta.env.VITE_LIVEKIT_URL as string
-
 export function createRoom(): Room {
   return new Room({
     adaptiveStream: true,
@@ -12,8 +10,8 @@ export function createRoom(): Room {
   })
 }
 
-export async function connectRoom(room: Room, token: string): Promise<void> {
-  await room.connect(LIVEKIT_URL, token)
+export async function connectRoom(room: Room, serverUrl: string, token: string): Promise<void> {
+  await room.connect(serverUrl, token)
 }
 
 export function disconnectRoom(room: Room): void {

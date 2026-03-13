@@ -96,15 +96,16 @@ export function useMeetingRoom(roomId: string, identity: string): MeetingState {
     // ── Connection flow ───────────────────────────────────────────────────────
     async function join() {
       let token: string
+      let serverUrl: string
       try {
-        token = await fetchToken(roomId, identity)
+        ;({ token, serverUrl } = await fetchToken(roomId, identity))
       } catch {
         if (!dismounted) setError('token')
         return
       }
 
       try {
-        await connectRoom(room, token)
+        await connectRoom(room, serverUrl, token)
       } catch {
         if (!dismounted) setError('connection')
         return
